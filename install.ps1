@@ -1,8 +1,8 @@
-# install.ps1 — addhost installer for Windows (PowerShell)
-# Usage: irm https://raw.githubusercontent.com/daddasoft/addHost/main/install.ps1 | iex
+# install.ps1 — hostctl installer for Windows (PowerShell)
+# Usage: irm https://raw.githubusercontent.com/daddasoft/hostctl/main/install.ps1 | iex
 #
 # Options (set before piping):
-#   $env:ADDHOST_INSTALL_DIR = "C:\Tools"   (default: $env:USERPROFILE\.addhost\bin)
+#   $env:HOSTCTL_INSTALL_DIR = "C:\Tools"   (default: $env:USERPROFILE\.hostctl\bin)
 
 param(
     [string]$InstallDir = ""
@@ -10,9 +10,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$REPO       = "daddasoft/addHost"
-$BIN_NAME   = "addhost"
-$ASSET_NAME = "addhost-windows-x86_64.exe"
+$REPO       = "daddasoft/hostctl"
+$BIN_NAME   = "hostctl"
+$ASSET_NAME = "hostctl-windows-x86_64.exe"
 
 # ── Colour helpers ─────────────────────────────────────────────────────────────
 function Write-Info    ($msg) { Write-Host "  info  " -ForegroundColor Cyan    -NoNewline; Write-Host $msg }
@@ -21,11 +21,11 @@ function Write-Warn    ($msg) { Write-Host "  warn  " -ForegroundColor Yellow  -
 function Write-Err     ($msg) { Write-Host "  error " -ForegroundColor Red     -NoNewline; Write-Host $msg; exit 1 }
 
 # ── Resolve install directory ──────────────────────────────────────────────────
-if ($InstallDir -eq "" -and $env:ADDHOST_INSTALL_DIR) {
-    $InstallDir = $env:ADDHOST_INSTALL_DIR
+if ($InstallDir -eq "" -and $env:HOSTCTL_INSTALL_DIR) {
+    $InstallDir = $env:HOSTCTL_INSTALL_DIR
 }
 if ($InstallDir -eq "") {
-    $InstallDir = Join-Path $env:USERPROFILE ".addhost\bin"
+    $InstallDir = Join-Path $env:USERPROFILE ".hostctl\bin"
 }
 
 # ── Fetch latest release tag from GitHub API ───────────────────────────────────
@@ -89,6 +89,6 @@ $version = & $dest --version 2>&1
 Write-Ok "Verified: $version"
 Write-Host ""
 Write-Host "  Run " -NoNewline
-Write-Host "addhost --help" -ForegroundColor Cyan -NoNewline
+Write-Host "hostctl --help" -ForegroundColor Cyan -NoNewline
 Write-Host " to get started."
 Write-Host ""

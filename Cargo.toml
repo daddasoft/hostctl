@@ -1,10 +1,10 @@
 [package]
-name = "addhost"
+name = "hostctl"
 version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "addhost"
+name = "hostctl"
 path = "src/main.rs"
 
 [dependencies]

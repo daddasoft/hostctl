@@ -1,9 +1,9 @@
-# addhost
+# hostctl
 
 A cross-platform CLI to manage your system **hosts file** — add, remove, and list entries with safety guards against duplicates.
 
-[![CI](https://github.com/daddasoft/addHost/actions/workflows/ci.yml/badge.svg)](https://github.com/daddasoft/addHost/actions/workflows/ci.yml)
-[![Release](https://github.com/daddasoft/addHost/actions/workflows/release.yml/badge.svg)](https://github.com/daddasoft/addHost/releases)
+[![CI](https://github.com/daddasoft/hostctl/actions/workflows/ci.yml/badge.svg)](https://github.com/daddasoft/hostctl/actions/workflows/ci.yml)
+[![Release](https://github.com/daddasoft/hostctl/actions/workflows/release.yml/badge.svg)](https://github.com/daddasoft/hostctl/releases)
 
 ---
 
@@ -12,33 +12,33 @@ A cross-platform CLI to manage your system **hosts file** — add, remove, and l
 ### Linux & macOS — one-liner
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/daddasoft/addHost/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/daddasoft/hostctl/main/install.sh | bash
 ```
 
 ### Windows — one-liner (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/daddasoft/addHost/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/daddasoft/hostctl/main/install.ps1 | iex
 ```
 
-Installs to `~\.addhost\bin` and adds it to your **user PATH** automatically.  
+Installs to `~\.hostctl\bin` and adds it to your **user PATH** automatically.  
 Override the install directory:
 
 ```powershell
-$env:ADDHOST_INSTALL_DIR = "C:\Tools"
-irm https://raw.githubusercontent.com/daddasoft/addHost/main/install.ps1 | iex
+$env:HOSTCTL_INSTALL_DIR = "C:\Tools"
+irm https://raw.githubusercontent.com/daddasoft/hostctl/main/install.ps1 | iex
 ```
 
 ### Manual download
 
-Download the latest binary for your platform from the [Releases](https://github.com/daddasoft/addHost/releases) page:
+Download the latest binary for your platform from the [Releases](https://github.com/daddasoft/hostctl/releases) page:
 
 | Platform | File |
 |---|---|
-| Linux (x86_64) | `addhost-linux-x86_64` |
-| macOS (Intel) | `addhost-macos-x86_64` |
-| macOS (Apple Silicon) | `addhost-macos-aarch64` |
-| Windows (x86_64) | `addhost-windows-x86_64.exe` |
+| Linux (x86_64) | `hostctl-linux-x86_64` |
+| macOS (Intel) | `hostctl-macos-x86_64` |
+| macOS (Apple Silicon) | `hostctl-macos-aarch64` |
+| Windows (x86_64) | `hostctl-windows-x86_64.exe` |
 
 ### Build from source
 
@@ -46,7 +46,7 @@ Requires [Rust](https://rustup.rs):
 
 ```bash
 cargo build --release
-# binary → target/release/addhost  (or addhost.exe on Windows)
+# binary → target/release/hostctl  (or hostctl.exe on Windows)
 ```
 
 > **Note:** Writing to the system hosts file requires elevated privileges.  
@@ -57,7 +57,7 @@ cargo build --release
 ## Usage
 
 ```
-addhost [OPTIONS] <COMMAND>
+hostctl [OPTIONS] <COMMAND>
 
 Commands:
   add     Add a new entry
@@ -75,16 +75,16 @@ Options:
 
 ```bash
 # Basic
-addhost add 127.0.0.1 toto.local
+hostctl add 127.0.0.1 toto.local
 
 # With an inline comment
-addhost add 192.168.1.10 myserver.local --comment "dev server"
+hostctl add 192.168.1.10 myserver.local --comment "dev server"
 
 # Force a second entry if hostname already exists
-addhost add 10.0.0.1 toto.local --force
+hostctl add 10.0.0.1 toto.local --force
 
 # Replace the existing entry in-place
-addhost add 10.0.0.1 toto.local --overwrite   # or -o
+hostctl add 10.0.0.1 toto.local --overwrite   # or -o
 ```
 
 > `--force` and `--overwrite` are mutually exclusive.
@@ -92,13 +92,13 @@ addhost add 10.0.0.1 toto.local --overwrite   # or -o
 ### Remove an entry
 
 ```bash
-addhost remove toto.local
+hostctl remove toto.local
 ```
 
 ### List all entries
 
 ```bash
-addhost list
+hostctl list
 ```
 
 ```
@@ -111,7 +111,7 @@ IP ADDRESS           HOSTNAME(S)
 ### Test without touching the real hosts file
 
 ```bash
-addhost --hosts ./test-hosts add 127.0.0.1 toto.local
+hostctl --hosts ./test-hosts add 127.0.0.1 toto.local
 ```
 
 ---
@@ -224,7 +224,7 @@ fn duplicate_errors_without_flag() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), "127.0.0.1\ttoto.local\n").unwrap();
 
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_addhost"))
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_hostctl"))
         .args(["--hosts", tmp.path().to_str().unwrap(),
                "add", "127.0.0.1", "toto.local"])
         .output().unwrap();

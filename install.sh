@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# install.sh — addhost installer for Linux and macOS
-# Usage: curl -fsSL https://raw.githubusercontent.com/daddasoft/addHost/main/install.sh | bash
+# install.sh — hostctl installer for Linux and macOS
+# Usage: curl -fsSL https://raw.githubusercontent.com/daddasoft/hostctl/main/install.sh | bash
 
 set -euo pipefail
 
-REPO="daddasoft/addHost"
-BIN_NAME="addhost"
+REPO="daddasoft/hostctl"
+BIN_NAME="hostctl"
 INSTALL_DIR="/usr/local/bin"
 
 # ── Colours ───────────────────────────────────────────────────────────────────
@@ -38,7 +38,7 @@ if [ "$PLATFORM" = "linux" ] && [ "$ARCH_TAG" = "aarch64" ]; then
   error "Linux arm64 is not yet supported. Please build from source: https://github.com/$REPO"
 fi
 
-ASSET_NAME="${BIN_NAME}-${PLATFORM}-${ARCH_TAG}"
+ASSET_NAME="hostctl-${PLATFORM}-${ARCH_TAG}"
 
 # ── Resolve latest release tag ────────────────────────────────────────────────
 info "Fetching latest release from github.com/$REPO …"
@@ -79,7 +79,7 @@ rm -rf "$TMP_DIR"
 if command -v "$BIN_NAME" &>/dev/null; then
   success "Installed ${BOLD}${BIN_NAME}${RESET} $(${BIN_NAME} --version) → ${INSTALL_DIR}/${BIN_NAME}"
   echo ""
-  echo -e "  Run ${BOLD}addhost --help${RESET} to get started."
+  echo -e "  Run ${BOLD}hostctl --help${RESET} to get started."
   echo ""
 else
   warn "Binary installed to $INSTALL_DIR but it is not in your PATH."

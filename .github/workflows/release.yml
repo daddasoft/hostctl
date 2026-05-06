@@ -19,22 +19,22 @@ jobs:
           - name: Linux (x86_64)
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact: addhost-linux-x86_64
+            artifact: hostctl-linux-x86_64
 
           - name: macOS (x86_64)
             os: macos-latest
             target: x86_64-apple-darwin
-            artifact: addhost-macos-x86_64
+            artifact: hostctl-macos-x86_64
 
           - name: macOS (Apple Silicon)
             os: macos-latest
             target: aarch64-apple-darwin
-            artifact: addhost-macos-aarch64
+            artifact: hostctl-macos-aarch64
 
           - name: Windows (x86_64)
             os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: addhost-windows-x86_64.exe
+            artifact: hostctl-windows-x86_64.exe
 
     steps:
       - name: Checkout
@@ -63,14 +63,14 @@ jobs:
       - name: Rename binary (Unix)
         if: runner.os != 'Windows'
         run: |
-          cp target/${{ matrix.target }}/release/addhost \
+          cp target/${{ matrix.target }}/release/hostctl \
              ${{ matrix.artifact }}
 
       - name: Rename binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Copy-Item "target\${{ matrix.target }}\release\addhost.exe" `
+          Copy-Item "target\${{ matrix.target }}\release\hostctl.exe" `
                     "${{ matrix.artifact }}"
 
       # ── Upload as a job artifact (available in the Actions UI) ─────────────
@@ -102,11 +102,11 @@ jobs:
       - name: Create GitHub Release & upload assets
         uses: softprops/action-gh-release@v2
         with:
-          name: "addhost ${{ github.ref_name }}"
+          name: "hostctl ${{ github.ref_name }}"
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true   # auto-generates changelog from commits
           files: |
-            artifacts/addhost-linux-x86_64/addhost-linux-x86_64
-            artifacts/addhost-macos-x86_64/addhost-macos-x86_64
-            artifacts/addhost-macos-aarch64/addhost-macos-aarch64
-            artifacts/addhost-windows-x86_64.exe/addhost-windows-x86_64.exe
+            artifacts/hostctl-linux-x86_64/hostctl-linux-x86_64
+            artifacts/hostctl-macos-x86_64/hostctl-macos-x86_64
+            artifacts/hostctl-macos-aarch64/hostctl-macos-aarch64
+            artifacts/hostctl-windows-x86_64.exe/hostctl-windows-x86_64.exe

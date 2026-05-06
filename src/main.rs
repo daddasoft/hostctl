@@ -16,7 +16,7 @@ const HOSTS_PATH: &str = "/etc/hosts";
 
 #[derive(Parser)]
 #[command(
-    name = "addhost",
+    name = "hostctl",
     version,
     about = "Manage the Windows hosts file",
     long_about = None,
@@ -32,7 +32,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Add a new entry  (e.g. addhost add 127.0.0.1 toto.local)
+    /// Add a new entry  (e.g. hostctl add 127.0.0.1 toto.local)
     Add {
         /// IP address (IPv4 or IPv6)
         ip: String,
