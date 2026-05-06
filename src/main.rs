@@ -6,7 +6,11 @@ use std::{
     path::PathBuf,
 };
 
+#[cfg(windows)]
 const HOSTS_PATH: &str = r"C:\Windows\System32\drivers\etc\hosts";
+
+#[cfg(not(windows))]
+const HOSTS_PATH: &str = "/etc/hosts";
 
 // ── CLI definition ────────────────────────────────────────────────────────────
 
