@@ -31,24 +31,43 @@ irm https://raw.githubusercontent.com/daddasoft/hostctl/main/install.ps1 | iex
 
 ### Ansible
 
-You can automate the installation across your fleet using Ansible:
+You can automate the installation across your fleet using Ansible.
 
+**Linux & macOS:**
 ```yaml
-- name: Install hostctl
+- name: Install hostctl (Linux/macOS)
   ansible.builtin.shell: curl -fsSL https://raw.githubusercontent.com/daddasoft/hostctl/main/install.sh | bash
   args:
     creates: /usr/local/bin/hostctl
 ```
 
+**Windows:**
+```yaml
+- name: Install hostctl (Windows)
+  ansible.windows.win_shell: irm https://raw.githubusercontent.com/daddasoft/hostctl/main/install.ps1 | iex
+  args:
+    creates: '%USERPROFILE%\.hostctl\bin\hostctl.exe'
+```
+
 ### SaltStack
 
-For SaltStack environments, add this state:
+For SaltStack environments, add these states:
 
+**Linux & macOS:**
 ```yaml
-install_hostctl:
+install_hostctl_unix:
   cmd.run:
     - name: curl -fsSL https://raw.githubusercontent.com/daddasoft/hostctl/main/install.sh | bash
     - creates: /usr/local/bin/hostctl
+```
+
+**Windows:**
+```yaml
+install_hostctl_windows:
+  cmd.run:
+    - name: irm https://raw.githubusercontent.com/daddasoft/hostctl/main/install.ps1 | iex
+    - shell: powershell
+    - creates: '%USERPROFILE%\.hostctl\bin\hostctl.exe'
 ```
 
 ### Manual download
