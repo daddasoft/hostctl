@@ -29,6 +29,28 @@ $env:HOSTCTL_INSTALL_DIR = "C:\Tools"
 irm https://raw.githubusercontent.com/daddasoft/hostctl/main/install.ps1 | iex
 ```
 
+### Ansible
+
+You can automate the installation across your fleet using Ansible:
+
+```yaml
+- name: Install hostctl
+  ansible.builtin.shell: curl -fsSL https://raw.githubusercontent.com/daddasoft/hostctl/main/install.sh | bash
+  args:
+    creates: /usr/local/bin/hostctl
+```
+
+### SaltStack
+
+For SaltStack environments, add this state:
+
+```yaml
+install_hostctl:
+  cmd.run:
+    - name: curl -fsSL https://raw.githubusercontent.com/daddasoft/hostctl/main/install.sh | bash
+    - creates: /usr/local/bin/hostctl
+```
+
 ### Manual download
 
 Download the latest binary for your platform from the [Releases](https://github.com/daddasoft/hostctl/releases) page:

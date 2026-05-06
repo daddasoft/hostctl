@@ -252,3 +252,6 @@ fn read_hosts(path: &PathBuf) -> io::Result<String> {
         )
     })
 }
+
+#[cfg(test)]
+mod tests;
