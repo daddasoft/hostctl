@@ -1,6 +1,6 @@
 # hostctl
 
-A cross-platform CLI to manage your system **hosts file** — add, remove, and list entries with safety guards against duplicates.
+A cross-platform CLI to manage your system **hosts file** — add, remove, list, preview, and undo changes safely.
 
 [![CI](https://github.com/daddasoft/hostctl/actions/workflows/ci.yml/badge.svg)](https://github.com/daddasoft/hostctl/actions/workflows/ci.yml)
 [![Release](https://github.com/daddasoft/hostctl/actions/workflows/release.yml/badge.svg)](https://github.com/daddasoft/hostctl/releases)
@@ -104,10 +104,12 @@ Commands:
   add     Add a new entry
   remove  Remove an entry by hostname
   list    List all active entries
+  undo    Restore the most recent automatic backup
   help    Print help
 
 Options:
   --hosts <PATH>   Override the hosts file path (useful for testing)
+  --dry-run        Preview a change without writing any files
   -h, --help       Print help
   -V, --version    Print version
 ```
@@ -130,11 +132,22 @@ hostctl add 10.0.0.1 toto.local --overwrite   # or -o
 
 > `--force` and `--overwrite` are mutually exclusive.
 
+If a line contains several aliases, overwrite preserves the aliases that were
+not selected. For example, overwriting `app.local` in this line does not remove
+`localhost`:
+
+```text
+127.0.0.1 localhost app.local
+```
+
 ### Remove an entry
 
 ```bash
 hostctl remove toto.local
 ```
+
+Removal is alias-aware as well: other hostnames and inline comments on the same
+line are preserved.
 
 ### List all entries
 
@@ -154,6 +167,40 @@ IP ADDRESS           HOSTNAME(S)
 ```bash
 hostctl --hosts ./test-hosts add 127.0.0.1 toto.local
 ```
+
+### Preview a change
+
+Add `--dry-run` before or after the subcommand to see the affected lines without
+changing the hosts file or creating a backup:
+
+```bash
+hostctl --dry-run add 127.0.0.1 app.local
+hostctl remove old.local --dry-run
+hostctl undo --dry-run
+```
+
+Preview output uses `-` for removed lines and `+` for added lines.
+
+### Backups and undo
+
+Every successful `add` or `remove` creates an automatic one-level backup next
+to the hosts file:
+
+| Hosts file | Backup |
+|---|---|
+| `/etc/hosts` | `/etc/hosts.hostctl.bak` |
+| `C:\Windows\System32\drivers\etc\hosts` | `C:\Windows\System32\drivers\etc\hosts.hostctl.bak` |
+
+Restore it with:
+
+```bash
+hostctl undo
+```
+
+The restore is also backed up, so running `hostctl undo` a second time switches
+back to the version from before the first undo. Hosts-file and backup writes use
+temporary files followed by an atomic replacement to avoid partially written
+files.
 
 ---
 
@@ -241,40 +288,16 @@ Triggered automatically by `cargo release`. It:
 
 ## Testing
 
-Integration tests live in `tests/` and run the **real compiled binary** as a black-box:
+Unit and file-level integration tests live in `src/tests.rs` and exercise the
+parser, backup, undo, dry-run, and mutation behavior against temporary hosts
+files:
 
 ```bash
 cargo test
 ```
 
-Tests use a temporary file instead of the real hosts file so no elevated privileges are needed and nothing on your system is modified.
-
-Add [`tempfile`](https://crates.io/crates/tempfile) as a dev-dependency:
-
-```toml
-[dev-dependencies]
-tempfile = "3"
-```
-
-Example test:
-
-```rust
-// tests/integration_test.rs
-#[test]
-fn duplicate_errors_without_flag() {
-    let tmp = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(tmp.path(), "127.0.0.1\ttoto.local\n").unwrap();
-
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_hostctl"))
-        .args(["--hosts", tmp.path().to_str().unwrap(),
-               "add", "127.0.0.1", "toto.local"])
-        .output().unwrap();
-
-    assert!(!out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("--force"));
-}
-```
+Tests use temporary directories instead of the real hosts file, so no elevated
+privileges are needed and nothing on your system is modified.
 
 ---
 
