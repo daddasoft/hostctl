@@ -43,10 +43,12 @@ if (-not $tag) { Write-Err "Could not determine the latest release tag." }
 Write-Info "Latest version: $tag"
 
 $downloadUrl = "https://github.com/$REPO/releases/download/$tag/$ASSET_NAME"
+$checksumsUrl = "https://github.com/$REPO/releases/download/$tag/SHA256SUMS"
 
 # ── Download ───────────────────────────────────────────────────────────────────
 $tmpDir  = Join-Path $env:TEMP "addhost-install"
 $tmpExe  = Join-Path $tmpDir "$BIN_NAME.exe"
+$tmpSums = Join-Path $tmpDir "SHA256SUMS"
 
 if (Test-Path $tmpDir) { Remove-Item $tmpDir -Recurse -Force }
 New-Item -ItemType Directory -Path $tmpDir | Out-Null
@@ -55,9 +57,26 @@ Write-Info "Downloading $ASSET_NAME …"
 try {
     $wc = New-Object System.Net.WebClient
     $wc.DownloadFile($downloadUrl, $tmpExe)
+    $wc.DownloadFile($checksumsUrl, $tmpSums)
 } catch {
     Write-Err "Download failed.`n  URL : $downloadUrl`n  $_"
 }
+
+# ── Verify release checksum ────────────────────────────────────────────────────
+$checksumLine = Get-Content $tmpSums | Where-Object {
+    $_ -match ("\s+" + [regex]::Escape($ASSET_NAME) + "$")
+} | Select-Object -First 1
+
+if (-not $checksumLine) {
+    Write-Err "Release checksums do not contain $ASSET_NAME."
+}
+
+$expectedHash = ($checksumLine -split "\s+")[0].ToLowerInvariant()
+$actualHash = (Get-FileHash $tmpExe -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($actualHash -ne $expectedHash) {
+    Write-Err "Checksum verification failed for $ASSET_NAME. The download was not installed."
+}
+Write-Ok "Verified SHA-256: $actualHash"
 
 # ── Install ────────────────────────────────────────────────────────────────────
 if (-not (Test-Path $InstallDir)) {

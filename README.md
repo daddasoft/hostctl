@@ -104,10 +104,13 @@ Commands:
   add     Add a new entry
   remove  Remove an entry by hostname
   list    List all active entries
+  backup  Create or list checksum-protected backups
+  restore Restore a verified backup
   help    Print help
 
 Options:
   --hosts <PATH>   Override the hosts file path (useful for testing)
+  --dry-run        Preview exact proposed contents without changing the file
   -h, --help       Print help
   -V, --version    Print version
 ```
@@ -136,6 +139,10 @@ hostctl add 10.0.0.1 toto.local --overwrite   # or -o
 hostctl remove toto.local
 ```
 
+If a line contains multiple aliases, only the requested hostname is removed.
+The remaining aliases, inline comment, spacing, line endings, and final newline
+are preserved.
+
 ### List all entries
 
 ```bash
@@ -154,6 +161,45 @@ IP ADDRESS           HOSTNAME(S)
 ```bash
 hostctl --hosts ./test-hosts add 127.0.0.1 toto.local
 ```
+
+### Preview a change
+
+```bash
+hostctl --dry-run add 127.0.0.1 preview.local
+hostctl --dry-run remove preview.local
+```
+
+Dry runs do not write the hosts file and do not create backups.
+
+### Back up and restore
+
+Every successful modification first creates a SHA-256-protected backup under
+the user's local state directory. On Windows, backups are always stored at
+`%LOCALAPPDATA%\hostctl\<hosts-file-id>\backups`.
+
+```bash
+# Create a manual backup
+hostctl backup
+
+# List backups and verify every checksum
+hostctl backup list
+
+# Restore the latest verified backup
+hostctl restore
+
+# Restore a specific ID from backup list
+hostctl restore hosts.1785930000000000000.bak
+
+# Preview a restore without writing
+hostctl --dry-run restore latest
+```
+
+Writes are serialized with an inter-process lock and normally committed through
+an atomic same-directory replacement. If the existing file is writable but its
+protected parent directory is not, hostctl uses a user-local lock and performs
+a flushed in-place update with an explicit warning. Backups remain in the same
+user-local location in both modes. Symlinks and non-regular hosts-file targets
+are rejected.
 
 ---
 

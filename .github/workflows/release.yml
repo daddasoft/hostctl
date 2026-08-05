@@ -99,6 +99,17 @@ jobs:
       - name: List downloaded files
         run: find artifacts/ -type f
 
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          : > SHA256SUMS
+          for file in artifacts/*/*; do
+            hash="$(sha256sum "$file" | cut -d ' ' -f 1)"
+            printf '%s  %s\n' "$hash" "$file" | sha256sum --check -
+            printf '%s  %s\n' "$hash" "$(basename "$file")" >> SHA256SUMS
+          done
+          sort -o SHA256SUMS SHA256SUMS
+
       - name: Create GitHub Release & upload assets
         uses: softprops/action-gh-release@v2
         with:
@@ -110,3 +121,4 @@ jobs:
             artifacts/hostctl-macos-x86_64/hostctl-macos-x86_64
             artifacts/hostctl-macos-aarch64/hostctl-macos-aarch64
             artifacts/hostctl-windows-x86_64.exe/hostctl-windows-x86_64.exe
+            SHA256SUMS

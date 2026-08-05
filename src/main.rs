@@ -1,30 +1,28 @@
 use clap::{Parser, Subcommand};
-use std::{
-    fs,
-    io::{self, Write},
-    net::IpAddr,
-    path::PathBuf,
+use hostctl::{
+    BackupInfo, MutationResult, add_entry, create_backup, default_hosts_path, list_backups,
+    list_entries, remove_entry, restore_backup,
 };
-
-#[cfg(windows)]
-const HOSTS_PATH: &str = r"C:\Windows\System32\drivers\etc\hosts";
-
-#[cfg(not(windows))]
-const HOSTS_PATH: &str = "/etc/hosts";
-
-// ── CLI definition ────────────────────────────────────────────────────────────
+use std::{
+    io::{self, Write},
+    path::{Path, PathBuf},
+};
 
 #[derive(Parser)]
 #[command(
     name = "hostctl",
     version,
-    about = "Manage the Windows hosts file",
-    long_about = None,
+    about = "Safely manage the system hosts file",
+    long_about = None
 )]
 struct Cli {
-    /// Path to the hosts file (default: C:\\Windows\\System32\\drivers\\etc\\hosts)
+    /// Override the system hosts file path
     #[arg(long, global = true)]
     hosts: Option<PathBuf>,
+
+    /// Preview the exact proposed contents without writing or creating a backup
+    #[arg(long, global = true)]
+    dry_run: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -32,226 +30,169 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Add a new entry  (e.g. hostctl add 127.0.0.1 toto.local)
+    /// Add a new hostname mapping
     Add {
-        /// IP address (IPv4 or IPv6)
+        /// IPv4 or IPv6 address
         ip: String,
-        /// Hostname to map to the IP
+        /// Hostname to map
         hostname: String,
         /// Optional inline comment
         #[arg(short, long)]
         comment: Option<String>,
-        /// Allow adding a second entry even when the hostname already exists
+        /// Permit another mapping for an existing hostname
         #[arg(long)]
         force: bool,
-        /// Replace the existing entry instead of adding a new one
+        /// Change an existing hostname mapping without discarding its aliases
         #[arg(short, long)]
         overwrite: bool,
     },
 
-    /// Remove an entry by hostname
+    /// Remove a hostname without removing other aliases on the same line
     Remove {
         /// Hostname to remove
         hostname: String,
     },
 
-    /// List all non-comment entries
+    /// List active entries
+    List,
+
+    /// Create and inspect checksum-protected backups
+    Backup {
+        #[command(subcommand)]
+        command: Option<BackupCommand>,
+    },
+
+    /// Restore a verified backup, or the latest backup when no ID is supplied
+    Restore {
+        /// Backup ID shown by 'hostctl backup list', or 'latest'
+        backup: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum BackupCommand {
+    /// Create a backup immediately
+    Create,
+    /// List backups and verify their checksums
     List,
 }
 
-// ── Entry point ───────────────────────────────────────────────────────────────
-
 fn main() {
     let cli = Cli::parse();
-    let hosts_path = cli
-        .hosts
-        .unwrap_or_else(|| PathBuf::from(HOSTS_PATH));
+    let path = cli.hosts.unwrap_or_else(default_hosts_path);
 
     let result = match cli.command {
-        Command::Add { ip, hostname, comment, force, overwrite } => {
-            cmd_add(&hosts_path, &ip, &hostname, comment, force, overwrite)
+        Command::Add {
+            ip,
+            hostname,
+            comment,
+            force,
+            overwrite,
+        } => add_entry(
+            &path,
+            &ip,
+            &hostname,
+            comment.as_deref(),
+            force,
+            overwrite,
+            cli.dry_run,
+        )
+        .and_then(|result| {
+            finish_mutation(&path, &result, cli.dry_run)?;
+            if !cli.dry_run {
+                let action = if overwrite { "Overwritten" } else { "Added" };
+                println!("{action}: {ip}\t{hostname}");
+            }
+            Ok(())
+        }),
+        Command::Remove { hostname } => {
+            remove_entry(&path, &hostname, cli.dry_run).and_then(|(result, removed)| {
+                finish_mutation(&path, &result, cli.dry_run)?;
+                if !cli.dry_run {
+                    println!("Removed {removed} mapping(s) for '{hostname}'.");
+                }
+                Ok(())
+            })
         }
-        Command::Remove { hostname }           => cmd_remove(&hosts_path, &hostname),
-        Command::List                          => cmd_list(&hosts_path),
+        Command::List => cmd_list(&path),
+        Command::Backup { command } => match command.unwrap_or(BackupCommand::Create) {
+            BackupCommand::Create => create_backup(&path).map(|backup| {
+                println!("Backup created: {}", backup.id);
+                println!("SHA-256: {}", backup.checksum);
+            }),
+            BackupCommand::List => cmd_backup_list(&path),
+        },
+        Command::Restore { backup } => restore_backup(&path, backup.as_deref(), cli.dry_run)
+            .and_then(|result| {
+                finish_mutation(&path, &result, cli.dry_run)?;
+                if !cli.dry_run {
+                    println!("Restored verified backup.");
+                }
+                Ok(())
+            }),
     };
 
-    if let Err(e) = result {
-        eprintln!("error: {e}");
+    if let Err(error) = result {
+        eprintln!("error: {error}");
         std::process::exit(1);
     }
 }
 
-// ── Commands ──────────────────────────────────────────────────────────────────
-
-fn cmd_add(
-    path: &PathBuf,
-    ip: &str,
-    hostname: &str,
-    comment: Option<String>,
-    force: bool,
-    overwrite: bool,
-) -> io::Result<()> {
-    // --force and --overwrite are mutually exclusive.
-    if force && overwrite {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "--force and --overwrite cannot be used together",
-        ));
-    }
-
-    // Validate the IP address.
-    if ip.parse::<IpAddr>().is_err() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("'{}' is not a valid IP address", ip),
-        ));
-    }
-
-    // Validate the hostname (basic sanity check).
-    if hostname.is_empty() || hostname.contains(char::is_whitespace) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "hostname must not be empty or contain whitespace",
-        ));
-    }
-
-    let content = read_hosts(path)?;
-
-    // Build the new line.
-    let new_line = match &comment {
-        Some(c) => format!("{}\t{}\t# {}", ip, hostname, c),
-        None    => format!("{}\t{}", ip, hostname),
-    };
-
-    // Check for duplicate hostname (case-insensitive).
-    let duplicate = content.lines().any(|line| {
-        let trimmed = line.trim();
-        if trimmed.starts_with('#') || trimmed.is_empty() {
-            return false;
-        }
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        parts.len() >= 2 && parts[1..].iter().any(|h| h.eq_ignore_ascii_case(hostname))
-    });
-
-    if duplicate {
-        if overwrite {
-            // Build new content, replacing every matching line in-place.
-            let new_content: String = content
-                .lines()
-                .map(|line| {
-                    let trimmed = line.trim();
-                    if trimmed.starts_with('#') || trimmed.is_empty() {
-                        return line.to_string();
-                    }
-                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                    if parts.len() >= 2
-                        && parts[1..].iter().any(|h| h.eq_ignore_ascii_case(hostname))
-                    {
-                        return new_line.clone();
-                    }
-                    line.to_string()
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-                + "\n";
-            fs::write(path, new_content)?;
-            println!("✓ Overwritten:  {}", new_line);
-            return Ok(());
-        } else if force {
-            // Fall through and append anyway.
-        } else {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!(
-                    "hostname '{}' already exists.\n  Use --force to add a second entry, or --overwrite / -o to replace the current one.",
-                    hostname
-                ),
-            ));
-        }
-    }
-
-    // Append the new line.
-    let mut file = fs::OpenOptions::new().append(true).open(path)?;
-    if !content.is_empty() && !content.ends_with('\n') {
-        writeln!(file)?;
-    }
-    writeln!(file, "{}", new_line)?;
-
-    println!("✓ Added:  {}", new_line);
-    Ok(())
-}
-
-fn cmd_remove(path: &PathBuf, hostname: &str) -> io::Result<()> {
-    let content = read_hosts(path)?;
-    let mut removed = 0usize;
-
-    let kept: Vec<&str> = content
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            if trimmed.starts_with('#') || trimmed.is_empty() {
-                return true; // always keep comments & blanks
-            }
-            let parts: Vec<&str> = trimmed.split_whitespace().collect();
-            let matches = parts.len() >= 2
-                && parts[1..].iter().any(|h| h.eq_ignore_ascii_case(hostname));
-            if matches {
-                removed += 1;
-            }
-            !matches
-        })
-        .collect();
-
-    if removed == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("hostname '{}' not found in hosts file", hostname),
-        ));
-    }
-
-    let new_content = kept.join("\n") + "\n";
-    fs::write(path, new_content)?;
-    println!("✓ Removed {} entry/entries for '{}'.", removed, hostname);
-    Ok(())
-}
-
-fn cmd_list(path: &PathBuf) -> io::Result<()> {
-    let content = read_hosts(path)?;
-    let mut found = false;
-
-    println!("{:<20} {}", "IP ADDRESS", "HOSTNAME(S)");
-    println!("{}", "-".repeat(50));
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('#') || trimmed.is_empty() {
-            continue;
-        }
-        // Strip inline comment before printing.
-        let data = trimmed.splitn(2, '#').next().unwrap_or("").trim();
-        let parts: Vec<&str> = data.split_whitespace().collect();
-        if parts.len() >= 2 {
-            println!("{:<20} {}", parts[0], parts[1..].join(" "));
-            found = true;
-        }
-    }
-
-    if !found {
+fn cmd_list(path: &Path) -> io::Result<()> {
+    let entries = list_entries(path)?;
+    println!("{:<39} HOSTNAME(S)", "IP ADDRESS");
+    println!("{}", "-".repeat(70));
+    if entries.is_empty() {
         println!("(no entries found)");
+        return Ok(());
+    }
+    for entry in entries {
+        println!("{:<39} {}", entry.ip, entry.hostnames.join(" "));
     }
     Ok(())
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn read_hosts(path: &PathBuf) -> io::Result<String> {
-    fs::read_to_string(path).map_err(|e| {
-        io::Error::new(
-            e.kind(),
-            format!("cannot read '{}': {}", path.display(), e),
-        )
-    })
+fn cmd_backup_list(path: &Path) -> io::Result<()> {
+    let backups = list_backups(path)?;
+    if backups.is_empty() {
+        println!("(no backups found)");
+        return Ok(());
+    }
+    println!("{:<48} {:<8} SHA-256", "BACKUP ID", "STATUS");
+    println!("{}", "-".repeat(125));
+    for backup in backups {
+        let status = if backup.valid { "valid" } else { "INVALID" };
+        println!("{:<48} {:<8} {}", backup.id, status, backup.checksum);
+    }
+    Ok(())
 }
 
-#[cfg(test)]
-mod tests;
+fn finish_mutation(path: &Path, result: &MutationResult, dry_run: bool) -> io::Result<()> {
+    if dry_run {
+        print_preview(path, result)?;
+    } else if let Some(BackupInfo { id, .. }) = &result.backup {
+        println!("Backup: {id}");
+    }
+    if !dry_run && !result.atomic {
+        eprintln!(
+            "warning: the parent directory is protected; used a locked in-place write with a verified user backup"
+        );
+    }
+    Ok(())
+}
+
+fn print_preview(path: &Path, result: &MutationResult) -> io::Result<()> {
+    let mut stdout = io::stdout().lock();
+    writeln!(stdout, "Dry run: '{}' was not changed.", path.display())?;
+    writeln!(stdout, "--- current ({} bytes)", result.before.len())?;
+    stdout.write_all(&result.before)?;
+    if !result.before.ends_with(b"\n") {
+        writeln!(stdout, "\n\\ No newline at end of file")?;
+    }
+    writeln!(stdout, "+++ proposed ({} bytes)", result.after.len())?;
+    stdout.write_all(&result.after)?;
+    if !result.after.ends_with(b"\n") {
+        writeln!(stdout, "\n\\ No newline at end of file")?;
+    }
+    Ok(())
+}

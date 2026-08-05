@@ -54,14 +54,37 @@ fi
 info "Latest version: ${BOLD}${LATEST_TAG}${RESET}"
 
 DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}/${ASSET_NAME}"
+CHECKSUMS_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}/SHA256SUMS"
 
 # ── Download ──────────────────────────────────────────────────────────────────
 TMP_DIR="$(mktemp -d)"
 TMP_BIN="${TMP_DIR}/${BIN_NAME}"
+TMP_SUMS="${TMP_DIR}/SHA256SUMS"
 
 info "Downloading ${ASSET_NAME} …"
 curl -fsSL --progress-bar "$DOWNLOAD_URL" -o "$TMP_BIN" \
   || error "Download failed. URL: $DOWNLOAD_URL"
+curl -fsSL "$CHECKSUMS_URL" -o "$TMP_SUMS" \
+  || error "Could not download release checksums. URL: $CHECKSUMS_URL"
+
+# ── Verify release checksum ───────────────────────────────────────────────────
+EXPECTED_HASH="$(awk -v asset="$ASSET_NAME" '$2 == asset { print $1; exit }' "$TMP_SUMS")"
+if [ -z "$EXPECTED_HASH" ]; then
+  error "Release checksums do not contain $ASSET_NAME."
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL_HASH="$(sha256sum "$TMP_BIN" | awk '{ print $1 }')"
+elif command -v shasum >/dev/null 2>&1; then
+  ACTUAL_HASH="$(shasum -a 256 "$TMP_BIN" | awk '{ print $1 }')"
+else
+  error "SHA-256 verification requires sha256sum or shasum."
+fi
+
+if [ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]; then
+  error "Checksum verification failed for $ASSET_NAME. The download was not installed."
+fi
+success "Verified SHA-256: $ACTUAL_HASH"
 
 chmod +x "$TMP_BIN"
 
