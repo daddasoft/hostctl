@@ -238,9 +238,11 @@ hostctl --dry-run restore latest
 Writes are serialized with an inter-process lock and normally committed through
 an atomic same-directory replacement. If the existing file is writable but its
 protected parent directory is not, hostctl uses a user-local lock and performs
-a flushed in-place update with an explicit warning. Backups remain in the same
-user-local location in both modes. Symlinks and non-regular hosts-file targets
-are rejected.
+a flushed in-place update. Backups remain in the same user-local location in
+both modes. Symlinks and non-regular hosts-file targets are rejected.
+
+Each command writes an `info: executing command: <name>` operational log to
+stderr. Use `--quiet` to suppress this log and other successful command output.
 
 ### Query and update
 

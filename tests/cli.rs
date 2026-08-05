@@ -39,7 +39,9 @@ fn remove_preserves_alias_comment_crlf_and_creates_backup() {
         fs::read(&hosts).unwrap(),
         b"\xef\xbb\xbf# header\r\n127.0.0.1  localhost  # dev\r\n"
     );
-    assert!(stdout(&output).contains("Backup: hosts."));
+    assert!(!stdout(&output).contains("Backup:"));
+    assert!(!stderr(&output).contains("parent directory is protected"));
+    assert!(stderr(&output).contains("info: executing command: remove"));
 
     let backups = run(&hosts, &["backup", "list"]);
     assert!(backups.status.success(), "{}", stderr(&backups));
@@ -94,13 +96,9 @@ fn restore_recovers_verified_automatic_backup() {
 
     let changed = run(&hosts, &["add", "10.0.0.1", "app.local"]);
     assert!(changed.status.success(), "{}", stderr(&changed));
-    let backup_id = stdout(&changed)
-        .lines()
-        .find_map(|line| line.strip_prefix("Backup: "))
-        .unwrap()
-        .to_string();
+    assert!(!stdout(&changed).contains("Backup:"));
 
-    let restored = run(&hosts, &["restore", &backup_id]);
+    let restored = run(&hosts, &["restore", "latest"]);
     assert!(restored.status.success(), "{}", stderr(&restored));
     assert_eq!(fs::read(&hosts).unwrap(), original);
 }
@@ -344,4 +342,15 @@ fn dry_run_supports_machine_readable_output() {
     let value: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
     assert_eq!(value["changed"], true);
     assert!(value["proposed"].as_str().unwrap().contains("app.local"));
+}
+
+#[test]
+fn quiet_suppresses_command_info_log() {
+    let directory = tempdir().unwrap();
+    let hosts = directory.path().join("hosts");
+    fs::write(&hosts, b"127.0.0.1 localhost\n").unwrap();
+
+    let output = run(&hosts, &["--quiet", "list"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(!stderr(&output).contains("info: executing command:"));
 }

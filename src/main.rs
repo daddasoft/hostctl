@@ -233,6 +233,38 @@ enum Command {
     SelfUninstall,
 }
 
+impl Command {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Add { .. } => "add",
+            Self::Remove { .. } => "remove",
+            Self::Get { .. } => "get",
+            Self::Search { .. } => "search",
+            Self::Update { .. } => "update",
+            Self::Disable { .. } => "disable",
+            Self::Enable { .. } => "enable",
+            Self::Status { .. } => "status",
+            Self::Ensure { .. } => "ensure",
+            Self::List { .. } => "list",
+            Self::Clear => "clear",
+            Self::Backup { .. } => "backup",
+            Self::Restore { .. } => "restore",
+            Self::Export { .. } => "export",
+            Self::Import { .. } => "import",
+            Self::Config { .. } => "config",
+            Self::Group { .. } => "group",
+            Self::Profile { .. } => "profile",
+            Self::Doctor => "doctor",
+            Self::FlushDns => "flush-dns",
+            Self::Resolve { .. } => "resolve",
+            Self::Completion { .. } => "completion",
+            Self::Man { .. } => "man",
+            Self::SelfUpdate { .. } => "self-update",
+            Self::SelfUninstall => "self-uninstall",
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum EnsureCommand {
     Present {
@@ -357,6 +389,9 @@ fn main() {
         if context.verbose {
             eprintln!("hosts: {}", context.hosts.display());
             eprintln!("config: {}", context.config.display());
+        }
+        if !context.quiet {
+            eprintln!("info: executing command: {}", cli.command.name());
         }
         run(&context, cli.command)
     });
@@ -959,17 +994,11 @@ fn finish_mutation(context: &Context, result: &MutationResult, message: &str) ->
         print_mutation_preview(context, result)?;
     } else if !context.quiet {
         println!("{message}");
-        if let Some(backup) = &result.backup {
-            println!("Backup: {}", backup.id);
-            if context.verbose {
-                eprintln!("backup path: {}", backup.path.display());
-            }
+        if let Some(backup) = &result.backup
+            && context.verbose
+        {
+            eprintln!("backup path: {}", backup.path.display());
         }
-    }
-    if !context.dry_run && !result.atomic {
-        eprintln!(
-            "warning: the parent directory is protected; used a locked in-place write with a verified user backup"
-        );
     }
     if !context.dry_run && context.flush_dns && result.before != result.after {
         flush_dns()?;
