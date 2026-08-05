@@ -6,7 +6,7 @@ set -euo pipefail
 
 REPO="daddasoft/hostctl"
 BIN_NAME="hostctl"
-INSTALL_DIR="/usr/local/bin"
+INSTALL_DIR="${HOSTCTL_INSTALL_DIR:-/usr/local/bin}"
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -32,11 +32,6 @@ case "$ARCH" in
   arm64  | aarch64) ARCH_TAG="aarch64" ;;
   *)                error "Unsupported architecture: $ARCH" ;;
 esac
-
-# macOS x86_64 and aarch64 are both supported; Linux only x86_64 for now
-if [ "$PLATFORM" = "linux" ] && [ "$ARCH_TAG" = "aarch64" ]; then
-  error "Linux arm64 is not yet supported. Please build from source: https://github.com/$REPO"
-fi
 
 ASSET_NAME="hostctl-${PLATFORM}-${ARCH_TAG}"
 

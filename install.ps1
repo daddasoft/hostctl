@@ -12,13 +12,21 @@ $ErrorActionPreference = "Stop"
 
 $REPO       = "daddasoft/hostctl"
 $BIN_NAME   = "hostctl"
-$ASSET_NAME = "hostctl-windows-x86_64.exe"
 
 # ── Colour helpers ─────────────────────────────────────────────────────────────
 function Write-Info    ($msg) { Write-Host "  info  " -ForegroundColor Cyan    -NoNewline; Write-Host $msg }
 function Write-Ok      ($msg) { Write-Host "  ok    " -ForegroundColor Green   -NoNewline; Write-Host $msg }
 function Write-Warn    ($msg) { Write-Host "  warn  " -ForegroundColor Yellow  -NoNewline; Write-Host $msg }
 function Write-Err     ($msg) { Write-Host "  error " -ForegroundColor Red     -NoNewline; Write-Host $msg; exit 1 }
+
+# ── Detect architecture ───────────────────────────────────────────────────────
+$architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+switch ($architecture) {
+    "X64"   { $ARCH_TAG = "x86_64" }
+    "Arm64" { $ARCH_TAG = "aarch64" }
+    default { Write-Err "Unsupported Windows architecture: $architecture" }
+}
+$ASSET_NAME = "hostctl-windows-$ARCH_TAG.exe"
 
 # ── Resolve install directory ──────────────────────────────────────────────────
 if ($InstallDir -eq "" -and $env:HOSTCTL_INSTALL_DIR) {

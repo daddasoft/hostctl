@@ -21,6 +21,11 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact: hostctl-linux-x86_64
 
+          - name: Linux (ARM64)
+            os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact: hostctl-linux-aarch64
+
           - name: macOS (x86_64)
             os: macos-latest
             target: x86_64-apple-darwin
@@ -35,6 +40,11 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: hostctl-windows-x86_64.exe
+
+          - name: Windows (ARM64)
+            os: windows-latest
+            target: aarch64-pc-windows-msvc
+            artifact: hostctl-windows-aarch64.exe
 
     steps:
       - name: Checkout
@@ -56,8 +66,32 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-cargo-
 
+      - name: Install Linux ARM64 linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Smoke test release binary (Linux native)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: target/${{ matrix.target }}/release/hostctl --version
+
+      - name: Smoke test release binary (macOS native)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          case "$(uname -m):${{ matrix.target }}" in
+            x86_64:x86_64-*|arm64:aarch64-*) target/${{ matrix.target }}/release/hostctl --version ;;
+            *) echo "Skipping non-native target smoke test" ;;
+          esac
+
+      - name: Smoke test release binary (Windows native)
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        run: '& "target\${{ matrix.target }}\release\hostctl.exe" --version'
 
       # ── Rename the binary to a platform-specific name ──────────────────────
       - name: Rename binary (Unix)
@@ -99,6 +133,23 @@ jobs:
       - name: List downloaded files
         run: find artifacts/ -type f
 
+      - name: Build Debian packages
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p packages
+          for spec in "x86_64:amd64" "aarch64:arm64"; do
+            asset_arch="${spec%%:*}"
+            deb_arch="${spec##*:}"
+            root="packages/hostctl_${version}_${deb_arch}"
+            mkdir -p "$root/DEBIAN" "$root/usr/bin"
+            cp "artifacts/hostctl-linux-${asset_arch}/hostctl-linux-${asset_arch}" "$root/usr/bin/hostctl"
+            chmod 755 "$root/usr/bin/hostctl"
+            printf 'Package: hostctl\nVersion: %s\nArchitecture: %s\nMaintainer: daddasoft\nDescription: Safe hosts file management\n' "$version" "$deb_arch" > "$root/DEBIAN/control"
+            dpkg-deb --build "$root" "packages/hostctl_${version}_${deb_arch}.deb"
+            rm -rf "$root"
+          done
+
       - name: Generate SHA-256 checksums
         shell: bash
         run: |
@@ -108,7 +159,17 @@ jobs:
             printf '%s  %s\n' "$hash" "$file" | sha256sum --check -
             printf '%s  %s\n' "$hash" "$(basename "$file")" >> SHA256SUMS
           done
+          for file in packages/*.deb; do
+            hash="$(sha256sum "$file" | cut -d ' ' -f 1)"
+            printf '%s  %s\n' "$hash" "$(basename "$file")" >> SHA256SUMS
+          done
           sort -o SHA256SUMS SHA256SUMS
+
+      - name: Generate package manager manifests
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          pwsh -File scripts/generate-packages.ps1 -Version "$version"
 
       - name: Create GitHub Release & upload assets
         uses: softprops/action-gh-release@v2
@@ -118,7 +179,11 @@ jobs:
           generate_release_notes: true   # auto-generates changelog from commits
           files: |
             artifacts/hostctl-linux-x86_64/hostctl-linux-x86_64
+            artifacts/hostctl-linux-aarch64/hostctl-linux-aarch64
             artifacts/hostctl-macos-x86_64/hostctl-macos-x86_64
             artifacts/hostctl-macos-aarch64/hostctl-macos-aarch64
             artifacts/hostctl-windows-x86_64.exe/hostctl-windows-x86_64.exe
+            artifacts/hostctl-windows-aarch64.exe/hostctl-windows-aarch64.exe
+            packages/*.deb
+            packaging/out/*
             SHA256SUMS

@@ -77,9 +77,11 @@ Download the latest binary for your platform from the [Releases](https://github.
 | Platform | File |
 |---|---|
 | Linux (x86_64) | `hostctl-linux-x86_64` |
+| Linux (ARM64) | `hostctl-linux-aarch64` |
 | macOS (Intel) | `hostctl-macos-x86_64` |
 | macOS (Apple Silicon) | `hostctl-macos-aarch64` |
 | Windows (x86_64) | `hostctl-windows-x86_64.exe` |
+| Windows (ARM64) | `hostctl-windows-aarch64.exe` |
 
 ### Build from source
 
@@ -90,8 +92,19 @@ cargo build --release
 # binary → target/release/hostctl  (or hostctl.exe on Windows)
 ```
 
-> **Note:** Writing to the system hosts file requires elevated privileges.  
-> Run with `sudo` on Linux/macOS, or as **Administrator** on Windows.
+### Uninstall
+
+```powershell
+irm https://raw.githubusercontent.com/daddasoft/hostctl/main/uninstall.ps1 | iex
+```
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/daddasoft/hostctl/main/uninstall.sh | sh
+```
+
+> **Note:** System hosts files normally require `sudo` or an Administrator
+> terminal. If the existing file ACL already grants write access, hostctl can
+> use its backed-up compatibility write path without directory elevation.
 
 ---
 
@@ -101,16 +114,36 @@ cargo build --release
 hostctl [OPTIONS] <COMMAND>
 
 Commands:
-  add     Add a new entry
-  remove  Remove an entry by hostname
-  list    List all active entries
-  backup  Create or list checksum-protected backups
-  restore Restore a verified backup
-  help    Print help
+  add          Add one or more aliases for an IP address
+  remove       Remove mappings by hostname or IP address
+  get          Show mappings for one hostname
+  search       Search IPs, hostnames, and comments
+  update       Update or rename a hostname
+  disable      Comment out a hostname mapping
+  enable       Reactivate a disabled mapping
+  status       Show active, disabled, duplicated, or missing state
+  ensure       Idempotently ensure a mapping is present or absent
+  list         List and filter entries
+  export       Export hosts, JSON, YAML, or TOML
+  import       Import entries from a file or stdin
+  config       Manage .hostctl.toml
+  group        Manage named groups
+  profile      Manage environment profiles
+  doctor       Diagnose the hosts file
+  flush-dns    Flush the DNS cache
+  resolve      Compare hosts-file and system resolution
+  completion   Generate shell completions
+  man          Generate a manual page
+  self-update  Install the latest release
 
 Options:
   --hosts <PATH>   Override the hosts file path (useful for testing)
+  --config <PATH>  Override the project configuration path
   --dry-run        Preview exact proposed contents without changing the file
+  --format <TYPE>  table, json, yaml, or plain
+  --flush-dns      Flush DNS after a successful change
+  -q, --quiet      Suppress successful output
+  -v, --verbose    Print operational details
   -h, --help       Print help
   -V, --version    Print version
 ```
@@ -123,6 +156,9 @@ hostctl add 127.0.0.1 toto.local
 
 # With an inline comment
 hostctl add 192.168.1.10 myserver.local --comment "dev server"
+
+# Multiple aliases
+hostctl add 127.0.0.1 app.local api.local admin.local
 
 # Force a second entry if hostname already exists
 hostctl add 10.0.0.1 toto.local --force
@@ -137,6 +173,8 @@ hostctl add 10.0.0.1 toto.local --overwrite   # or -o
 
 ```bash
 hostctl remove toto.local
+hostctl remove --ip 192.168.1.10
+hostctl remove toto.local --from-ip 10.0.0.1
 ```
 
 If a line contains multiple aliases, only the requested hostname is removed.
@@ -147,6 +185,9 @@ are preserved.
 
 ```bash
 hostctl list
+hostctl list --hostname app.local --include-disabled
+hostctl list --ipv4 --sort hostname
+hostctl --format json list
 ```
 
 ```
@@ -201,6 +242,84 @@ a flushed in-place update with an explicit warning. Backups remain in the same
 user-local location in both modes. Symlinks and non-regular hosts-file targets
 are rejected.
 
+### Query and update
+
+```bash
+hostctl get app.local
+hostctl search development
+hostctl update app.local --ip 10.0.0.2 --rename app-v2.local
+hostctl disable app-v2.local
+hostctl status app-v2.local
+hostctl enable app-v2.local
+hostctl ensure present 10.0.0.2 app-v2.local
+hostctl ensure absent old.local
+```
+
+### Import and export
+
+```bash
+hostctl export --file-format json --output entries.json
+hostctl import entries.json --mode merge
+hostctl --dry-run import entries.toml --mode replace
+hostctl import entries.toml --mode replace --yes
+```
+
+Structured files use schema version `1` and an `entries` array. Replace mode
+requires `--yes` unless it is a dry run.
+
+### Groups and profiles
+
+```bash
+hostctl config init
+hostctl group add dev 127.0.0.1 app.local api.local
+hostctl group disable dev
+hostctl group enable dev
+hostctl profile create work dev
+hostctl profile activate work
+hostctl config validate
+hostctl config diff
+hostctl config apply
+```
+
+Managed entries are written only between `hostctl managed` markers. Manual and
+system entries outside that block are never removed by group, profile, config,
+or `clear` commands.
+
+Example `.hostctl.toml`:
+
+```toml
+version = 1
+active_profile = "work"
+
+[groups.dev]
+enabled = true
+
+[[groups.dev.entries]]
+ip = "127.0.0.1"
+hostnames = ["app.local", "api.local"]
+comment = "development"
+
+[profiles.work]
+groups = ["dev"]
+```
+
+### Diagnostics and integration
+
+```bash
+hostctl doctor
+hostctl resolve app.local
+hostctl flush-dns
+hostctl completion powershell > hostctl.ps1
+hostctl completion bash > hostctl.bash
+hostctl man --output hostctl.1
+hostctl self-update
+hostctl self-update --check
+hostctl self-uninstall
+```
+
+Stable error exit codes are `2` invalid input, `3` not found, `4` duplicate,
+`5` permission denied, `6` lock contention, and `7` invalid data.
+
 ---
 
 ## Default hosts file paths
@@ -253,9 +372,8 @@ git push origin feature/my-thing
 # A staging build runs and uploads real release binaries as PR artifacts
 # Download and smoke-test them before merging
 
-# 6. After merging, cut a release
-cargo release patch   # or minor / major
-# This bumps Cargo.toml, commits, tags, and pushes → triggers release.yml
+# 6. After merging, update Cargo.toml/Cargo.lock and push an annotated vX.Y.Z tag
+# The tag triggers release.yml
 ```
 
 ---
@@ -277,11 +395,12 @@ Builds release binaries for all platforms and uploads them as **PR artifacts** (
 
 ### `release.yml` — Production release (on `v*.*.*` tag)
 
-Triggered automatically by `cargo release`. It:
+Triggered automatically by a `v*.*.*` tag. It:
 
-1. Builds optimised release binaries for all 4 targets in parallel
+1. Builds optimised release binaries for all 6 targets in parallel
 2. Creates a GitHub Release with an auto-generated changelog
-3. Attaches all binaries as downloadable release assets
+3. Creates amd64/arm64 Debian packages and package-manager manifests
+4. Attaches binaries, package metadata, and `SHA256SUMS`
 
 ---
 
@@ -295,51 +414,34 @@ cargo test
 
 Tests use a temporary file instead of the real hosts file so no elevated privileges are needed and nothing on your system is modified.
 
-Add [`tempfile`](https://crates.io/crates/tempfile) as a dev-dependency:
+The suite includes parser property tests and black-box coverage for entry
+lifecycle, backups, structured import/export, groups, profiles, completions,
+manual pages, and stable exit codes. Benchmark the 100,000-entry parser with:
 
-```toml
-[dev-dependencies]
-tempfile = "3"
+```bash
+cargo bench --bench large_hosts
 ```
 
-Example test:
-
-```rust
-// tests/integration_test.rs
-#[test]
-fn duplicate_errors_without_flag() {
-    let tmp = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(tmp.path(), "127.0.0.1\ttoto.local\n").unwrap();
-
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_hostctl"))
-        .args(["--hosts", tmp.path().to_str().unwrap(),
-               "add", "127.0.0.1", "toto.local"])
-        .output().unwrap();
-
-    assert!(!out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("--force"));
-}
-```
+The `fuzz/` package provides a `cargo fuzz run parse_hosts` target. Release
+binaries and the published installers are smoke-tested by GitHub Actions.
 
 ---
 
 ## Versioning
 
-This project uses [cargo-release](https://github.com/crate-ci/cargo-release):
+Update `Cargo.toml` and `Cargo.lock`, validate, commit, and push an annotated tag:
 
 ```bash
-cargo install cargo-release
-
-cargo release patch   # 0.1.0 → 0.1.1
-cargo release minor   # 0.1.1 → 0.2.0
-cargo release major   # 0.2.0 → 1.0.0
+cargo test
+cargo clippy --all-targets -- -D warnings
+git commit -am "chore: release v0.4.0"
+git tag -a v0.4.0 -m "hostctl v0.4.0"
+git push origin main v0.4.0
 ```
 
-Each command:
-- Updates `version` in `Cargo.toml`
-- Creates a commit `chore: release vX.Y.Z`
-- Creates and pushes the git tag → triggers `release.yml`
+The tag triggers `release.yml`. External Homebrew, Scoop, WinGet, Chocolatey,
+AUR, crates.io, and package-repository publication still requires the
+maintainer credentials for those registries.
 
 ---
 

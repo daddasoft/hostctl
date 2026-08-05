@@ -1,4 +1,7 @@
-use std::{io, net::IpAddr, ops::Range};
+use serde::{Deserialize, Serialize};
+use std::{collections::HashSet, io, net::IpAddr, ops::Range};
+
+const DISABLED_PREFIX: &str = "# hostctl-disabled: ";
 
 #[derive(Debug, Clone)]
 struct Line {
@@ -13,10 +16,14 @@ struct ParsedEntry {
     comment_start: Option<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
     pub ip: String,
     pub hostnames: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 #[derive(Debug)]
@@ -83,20 +90,63 @@ impl HostsDocument {
     }
 
     pub fn entries(&self) -> Vec<Entry> {
+        self.all_entries()
+            .into_iter()
+            .filter(|entry| !entry.disabled)
+            .collect()
+    }
+
+    pub fn all_entries(&self) -> Vec<Entry> {
         self.lines
             .iter()
-            .filter_map(|line| {
-                let entry = parse_entry(&line.body)?;
-                Some(Entry {
-                    ip: line.body[entry.ip].to_string(),
-                    hostnames: entry
-                        .hosts
-                        .iter()
-                        .map(|span| line.body[span.clone()].to_string())
-                        .collect(),
-                })
-            })
+            .filter_map(|line| entry_from_body(&line.body))
             .collect()
+    }
+
+    pub fn add_many(
+        &mut self,
+        ip: &str,
+        hostnames: &[String],
+        comment: Option<&str>,
+        force: bool,
+        overwrite: bool,
+    ) -> io::Result<()> {
+        if hostnames.is_empty() {
+            return invalid("at least one hostname is required");
+        }
+        validate_ip(ip)?;
+        validate_comment(comment)?;
+        if force && overwrite {
+            return invalid("--force and --overwrite cannot be used together");
+        }
+        let mut unique = HashSet::new();
+        for hostname in hostnames {
+            validate_hostname(hostname)?;
+            if !unique.insert(hostname.to_ascii_lowercase()) {
+                return invalid(format!("hostname '{hostname}' was supplied more than once"));
+            }
+        }
+
+        if overwrite {
+            for hostname in hostnames {
+                self.add(ip, hostname, comment, false, true)?;
+            }
+            return Ok(());
+        }
+
+        if !force
+            && let Some(duplicate) = hostnames
+                .iter()
+                .find(|hostname| self.has_host_any_state(hostname))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("hostname '{duplicate}' already exists. Use --force or --overwrite"),
+            ));
+        }
+        self.append_line(format_entry_many(ip, hostnames, comment));
+        self.restore_final_ending();
+        Ok(())
     }
 
     pub fn add(
@@ -165,6 +215,223 @@ impl HostsDocument {
         self.lines = output;
         self.restore_final_ending();
         Ok(removed)
+    }
+
+    pub fn remove_from_ip(&mut self, hostname: &str, ip: &str) -> io::Result<usize> {
+        validate_hostname(hostname)?;
+        let target_ip = ip.parse::<IpAddr>().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("'{ip}' is not a valid IP address"),
+            )
+        })?;
+        let mut removed = 0;
+        let mut output = Vec::with_capacity(self.lines.len());
+        for mut line in self.lines.drain(..) {
+            let Some(entry) = parse_entry(&line.body) else {
+                output.push(line);
+                continue;
+            };
+            let ip_matches = line.body[entry.ip.clone()].parse::<IpAddr>().ok() == Some(target_ip);
+            let matching = if ip_matches {
+                entry
+                    .hosts
+                    .iter()
+                    .filter(|span| line.body[(*span).clone()].eq_ignore_ascii_case(hostname))
+                    .count()
+            } else {
+                0
+            };
+            if matching == 0 {
+                output.push(line);
+            } else {
+                removed += matching;
+                if matching < entry.hosts.len() {
+                    line.body = remove_host_tokens(&line.body, &entry, hostname);
+                    output.push(line);
+                }
+            }
+        }
+        self.lines = output;
+        if removed == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("hostname '{hostname}' was not mapped to '{ip}'"),
+            ));
+        }
+        self.restore_final_ending();
+        Ok(removed)
+    }
+
+    pub fn remove_ip(&mut self, ip: &str) -> io::Result<usize> {
+        validate_ip(ip)?;
+        let mut removed = 0;
+        self.lines.retain(|line| {
+            let Some(entry) = parse_entry(&line.body) else {
+                return true;
+            };
+            if line.body[entry.ip].parse::<IpAddr>().ok() == ip.parse::<IpAddr>().ok() {
+                removed += entry.hosts.len();
+                false
+            } else {
+                true
+            }
+        });
+        if removed == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("IP address '{ip}' not found in hosts file"),
+            ));
+        }
+        self.restore_final_ending();
+        Ok(removed)
+    }
+
+    pub fn update(
+        &mut self,
+        hostname: &str,
+        ip: Option<&str>,
+        rename: Option<&str>,
+        comment: Option<&str>,
+    ) -> io::Result<()> {
+        validate_hostname(hostname)?;
+        if let Some(ip) = ip {
+            validate_ip(ip)?;
+        }
+        if let Some(rename) = rename {
+            validate_hostname(rename)?;
+            if !rename.eq_ignore_ascii_case(hostname) && self.has_host_any_state(rename) {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("hostname '{rename}' already exists"),
+                ));
+            }
+        }
+        validate_comment(comment)?;
+        if ip.is_none() && rename.is_none() && comment.is_none() {
+            return invalid("update requires --ip, --rename, or --comment");
+        }
+
+        let existing = self
+            .all_entries()
+            .into_iter()
+            .find(|entry| {
+                !entry.disabled
+                    && entry
+                        .hostnames
+                        .iter()
+                        .any(|value| value.eq_ignore_ascii_case(hostname))
+            })
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("hostname '{hostname}' not found in hosts file"),
+                )
+            })?;
+        self.remove(hostname)?;
+        let new_ip = ip.unwrap_or(&existing.ip);
+        let new_hostname = rename.unwrap_or(hostname);
+        let new_comment = comment.or(existing.comment.as_deref());
+        self.add(new_ip, new_hostname, new_comment, false, false)
+    }
+
+    pub fn set_enabled(&mut self, hostname: &str, enabled: bool) -> io::Result<()> {
+        validate_hostname(hostname)?;
+        let entries = self.all_entries();
+        let existing = entries
+            .iter()
+            .find(|entry| {
+                entry.disabled == enabled
+                    && entry
+                        .hostnames
+                        .iter()
+                        .any(|value| value.eq_ignore_ascii_case(hostname))
+            })
+            .cloned()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!(
+                        "hostname '{hostname}' is not {}",
+                        if enabled { "disabled" } else { "active" }
+                    ),
+                )
+            })?;
+
+        if enabled {
+            self.lines.retain(|line| {
+                !disabled_entry_from_body(&line.body).is_some_and(|entry| {
+                    entry
+                        .hostnames
+                        .iter()
+                        .any(|value| value.eq_ignore_ascii_case(hostname))
+                })
+            });
+            self.add(
+                &existing.ip,
+                hostname,
+                existing.comment.as_deref(),
+                false,
+                false,
+            )?;
+        } else {
+            self.remove(hostname)?;
+            self.append_line(format!(
+                "{DISABLED_PREFIX}{}",
+                format_entry(&existing.ip, hostname, existing.comment.as_deref())
+            ));
+            self.restore_final_ending();
+        }
+        Ok(())
+    }
+
+    pub fn replace_active(&mut self, entries: &[Entry]) -> io::Result<()> {
+        self.lines.retain(|line| {
+            parse_entry(&line.body).is_none() && disabled_entry_from_body(&line.body).is_none()
+        });
+        for entry in entries {
+            validate_ip(&entry.ip)?;
+            for hostname in &entry.hostnames {
+                validate_hostname(hostname)?;
+            }
+            validate_comment(entry.comment.as_deref())?;
+            if entry.hostnames.is_empty() {
+                return invalid("imported entries must include at least one hostname");
+            }
+            let body = format_entry_many(&entry.ip, &entry.hostnames, entry.comment.as_deref());
+            if entry.disabled {
+                self.append_line(format!("{DISABLED_PREFIX}{body}"));
+            } else {
+                self.append_line(body);
+            }
+        }
+        self.restore_final_ending();
+        Ok(())
+    }
+
+    pub fn malformed_line_count(&self) -> usize {
+        self.lines
+            .iter()
+            .filter(|line| {
+                let trimmed = line.body.trim();
+                if trimmed.is_empty()
+                    || trimmed.starts_with('#')
+                    || parse_entry(&line.body).is_some()
+                {
+                    return false;
+                }
+                token_spans(trimmed).len() >= 2
+            })
+            .count()
+    }
+
+    fn has_host_any_state(&self, hostname: &str) -> bool {
+        self.all_entries().iter().any(|entry| {
+            entry
+                .hostnames
+                .iter()
+                .any(|value| value.eq_ignore_ascii_case(hostname))
+        })
     }
 
     fn overwrite(&mut self, ip: &str, hostname: &str, comment: Option<&str>) {
@@ -324,6 +591,36 @@ fn parse_entry(body: &str) -> Option<ParsedEntry> {
     })
 }
 
+fn entry_from_body(body: &str) -> Option<Entry> {
+    if let Some(entry) = disabled_entry_from_body(body) {
+        return Some(entry);
+    }
+    let parsed = parse_entry(body)?;
+    Some(entry_from_parsed(body, &parsed, false))
+}
+
+fn disabled_entry_from_body(body: &str) -> Option<Entry> {
+    let inner = body.trim_start().strip_prefix(DISABLED_PREFIX)?;
+    let parsed = parse_entry(inner)?;
+    Some(entry_from_parsed(inner, &parsed, true))
+}
+
+fn entry_from_parsed(body: &str, parsed: &ParsedEntry, disabled: bool) -> Entry {
+    Entry {
+        ip: body[parsed.ip.clone()].to_string(),
+        hostnames: parsed
+            .hosts
+            .iter()
+            .map(|span| body[span.clone()].to_string())
+            .collect(),
+        comment: parsed
+            .comment_start
+            .map(|start| body[start + 1..].trim().to_string())
+            .filter(|value| !value.is_empty()),
+        disabled,
+    }
+}
+
 fn token_spans(value: &str) -> Vec<Range<usize>> {
     let mut tokens = Vec::new();
     let mut start = None;
@@ -379,6 +676,14 @@ fn format_entry(ip: &str, hostname: &str, comment: Option<&str>) -> String {
     }
 }
 
+fn format_entry_many(ip: &str, hostnames: &[String], comment: Option<&str>) -> String {
+    let mapping = format!("{ip}\t{}", hostnames.join(" "));
+    match comment {
+        Some(comment) => format!("{mapping}\t# {comment}"),
+        None => mapping,
+    }
+}
+
 fn invalid<T>(message: impl Into<String>) -> io::Result<T> {
     Err(io::Error::new(io::ErrorKind::InvalidInput, message.into()))
 }
@@ -390,6 +695,7 @@ fn default_line_ending() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn round_trip_preserves_original_bytes() {
@@ -436,5 +742,12 @@ mod tests {
         assert!(validate_hostname("bad..local").is_err());
         assert!(validate_hostname("bad_name.local").is_err());
         assert!(validate_comment(Some("bad\ncomment")).is_err());
+    }
+
+    proptest! {
+        #[test]
+        fn arbitrary_utf8_round_trips_without_mutation(input in ".{0,4096}") {
+            prop_assert_eq!(HostsDocument::parse(&input).render(), input);
+        }
     }
 }
