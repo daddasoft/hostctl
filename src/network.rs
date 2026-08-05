@@ -93,12 +93,14 @@ pub fn resolve(path: &Path, hostname: &str) -> io::Result<Resolution> {
 
 pub fn flush_dns() -> io::Result<()> {
     #[cfg(windows)]
-    return run_status("ipconfig", &["/flushdns"]);
+    {
+        run_status("ipconfig", &["/flushdns"])
+    }
 
     #[cfg(target_os = "macos")]
     {
         run_status("dscacheutil", &["-flushcache"])?;
-        return run_status("killall", &["-HUP", "mDNSResponder"]);
+        run_status("killall", &["-HUP", "mDNSResponder"])
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
